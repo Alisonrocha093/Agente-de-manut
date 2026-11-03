@@ -15,7 +15,7 @@ Fontes de dados:
 
 ESCOPO: apenas SUPERVISÃO. Não é camada de segurança e não comanda a válvula de gás.
 
-Requisitos:  pip install "streamlit>=1.37" plotly requests
+Requisitos:  pip install "streamlit>=1.37" plotly requests tzdata
 Execução  :  streamlit run supervisorio_queimador.py
 Tema      :  recomendado .streamlit/config.toml  ->  [theme]  base = "dark"
 """
@@ -345,7 +345,9 @@ class SimSupervisor:
         self.last_fast_s = self.last_slow_s = self.uptime.seconds()
 
         self.events = EventLog(EVENT_LOG_SIZE)
-        self.status = evaluate(list(self.io.inputs))
+        # CORREÇÃO: o estado do queimador agora se chama "bst". O nome "status"
+        # ficava reservado para o método status() usado pelo painel.
+        self.bst = evaluate(list(self.io.inputs))
         self.events.push(self.uptime.seconds(), EV_BOOT)
 
     # ---------- tempo ----------
@@ -428,8 +430,8 @@ class SimSupervisor:
         raw = self.io.inputs
         inp = [self.deb[i].update(raw[i], now_ms) for i in range(IN_COUNT)]
         nxt = evaluate(inp)
-        record_changes(self.status, nxt, self.uptime.seconds(), self.events)
-        self.status = nxt
+        record_changes(self.bst, nxt, self.uptime.seconds(), self.events)
+        self.bst = nxt
 
     def _loop(self):
         last_adc = last_poll = self._now_ms()
@@ -459,7 +461,7 @@ class SimSupervisor:
     # ---------- API (mesmo formato do JSON do firmware) ----------
     def status_dict(self) -> dict:
         with self.lock:
-            s, t = self.status, self.temp_now
+            s, t = self.bst, self.temp_now
             return {
                 "up": self.uptime.seconds(),
                 "in": {k: int(s.inp[i]) for i, k in enumerate(IN_KEYS)},
@@ -483,17 +485,13 @@ class SimSupervisor:
             return {"iv": iv, "age": age, "at": time.time(),
                     "v": [None if v == INVALID else v for v in buf.as_list()]}
 
-    def status(self_) -> tuple:  # noqa: D401  (interface comum com EspBackend)
-        raise NotImplementedError
+    # ---------- interface comum com EspBackend ----------
+    def status(self) -> tuple:
+        """Retorna (dict, stale). O simulador nunca fica 'sem comunicação'."""
+        return self.status_dict(), False
 
-
-# interface comum: status() -> (dict|None, stale)
-def _sim_status(self) -> tuple:
-    return self.status_dict(), False
-
-
-SimSupervisor.status = _sim_status  # type: ignore[assignment]
-SimSupervisor.trend = lambda self, rng: self.trend_dict(rng)  # type: ignore[attr-defined]
+    def trend(self, rng: int) -> dict:
+        return self.trend_dict(rng)
 
 
 # =====================================================================
